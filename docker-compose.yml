@@ -1,0 +1,76 @@
+# docker-compose.yml
+#
+# Defines and connects multiple containers.
+# Run everything with: docker-compose up
+#
+# WHY DOCKER-COMPOSE:
+#   We have two services (FastAPI + Streamlit).
+#   docker-compose starts both, connects them,
+#   and manages them as one application.
+
+
+
+services:
+
+  # ── SERVICE 1: FastAPI Backend ──────────────────────────────────────────────
+  api:
+    # build from our Dockerfile in current directory
+    build: .
+
+    # name the container
+    container_name: flavinator-api
+
+    # map port 8000 on your machine to port 8000 in container
+    # FORMAT: "host_port:container_port"
+    # WHY: without this you cannot access the container from browser
+    ports:
+      - "8000:8000"
+
+    # override the default CMD from Dockerfile
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+
+    # mount current directory into container
+    # WHY VOLUMES:
+    #   Without this, code changes require rebuilding the image.
+    #   With volumes, changes on your machine instantly appear
+    #   inside the container. Perfect for development.
+    volumes:
+      - .:/app
+
+    # environment variables available inside container
+    environment:
+      - PYTHONPATH=/app
+      - MLFLOW_TRACKING_URI=sqlite:///mlflow.db
+
+    # restart automatically if container crashes
+    restart: unless-stopped
+
+
+  # ── SERVICE 2: Streamlit Frontend ───────────────────────────────────────────
+  streamlit:
+    # use same image as api (same packages needed)
+    build: .
+
+    container_name: flavinator-streamlit
+
+    ports:
+      - "8501:8501"
+
+    # override CMD to run streamlit instead of uvicorn
+    command: streamlit run src/app.py --server.port 8501 --server.address 0.0.0.0
+
+    volumes:
+      - .:/app
+
+    environment:
+      - PYTHONPATH=/app
+      # IMPORTANT: streamlit talks to api container by service name
+      # not localhost - inside Docker, services find each other by name
+      - API_URL=http://api:8000
+
+    # wait for api to start before starting streamlit
+    # WHY DEPENDS_ON: streamlit needs the API to be ready
+    depends_on:
+      - api
+
+    restart: unless-stopped
