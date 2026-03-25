@@ -1,0 +1,106 @@
+# .github/workflows/ci.yml
+#
+# GitHub Actions CI/CD Pipeline for Flavinator
+#
+# WHEN DOES THIS RUN:
+#   - Every time you push code to main branch
+#   - Every time you open a Pull Request
+#
+# WHAT IT DOES:
+#   Job 1: test  -> installs dependencies and runs pytest
+#   Job 2: build -> builds Docker image to confirm it works
+#
+# WHY THIS ORDER:
+#   No point building Docker image if tests are failing.
+#   build only runs if test passes.
+
+name: Flavinator CI
+
+# TRIGGER: when to run this pipeline
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+
+  # ── JOB 1: RUN TESTS ────────────────────────────────────────────────────────
+  test:
+    # which machine to run on
+    # GitHub provides free Ubuntu virtual machines
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # Step 1: Download your code onto the GitHub machine
+      # WHY: the virtual machine starts empty, needs your code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Install Python 3.12
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Step 3: Cache pip packages
+      # WHY CACHE:
+      #   Installing 15+ packages takes 3-5 minutes every run.
+      #   Cache saves the packages after first run.
+      #   Subsequent runs skip installation = 4 minutes saved.
+      #   Cache key includes requirements.txt hash so it
+      #   invalidates automatically when packages change.
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # Step 4: Install dependencies
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Step 5: Run all tests
+      # WHY --tb=short: shows short traceback on failure (easier to read)
+      # WHY -v: verbose, shows each test name
+      - name: Run tests
+        run: |
+          pytest tests/ -v --tb=short
+
+      # Step 6: Show test summary
+      # This runs even if tests fail so you always see results
+      - name: Test summary
+        if: always()
+        run: |
+          echo "Tests completed"
+          pytest tests/ --tb=no -q
+
+
+  # ── JOB 2: BUILD DOCKER IMAGE ───────────────────────────────────────────────
+  build:
+    # only run if test job passed
+    # WHY: no point building broken code
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Build the Docker image
+      # WHY: confirms Dockerfile has no errors and image builds correctly
+      # We do not push to a registry yet - just verify it builds
+      - name: Build Docker image
+        run: |
+          docker build -t flavinator:test .
+
+      # Verify the image was created successfully
+      - name: Verify image exists
+        run: |
+          docker images | grep flavinator
